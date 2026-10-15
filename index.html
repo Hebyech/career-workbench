@@ -824,21 +824,11 @@ footer a{color:var(--ink2)}
               </div>
             </div>
             <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:2px">
-              <div class="f" style="max-width:200px"><label>每轮题量</label>
-                <div class="seg" id="segPerRound">
-                  <button data-v="1">1 题</button>
-                  <button data-v="2" class="on">2 题</button>
-                  <button data-v="3">3 题</button>
-                </div>
+              <div class="f" style="max-width:200px"><label>每轮题量（不限）</label>
+                <input type="number" id="numPerRound" min="1" max="20" value="2" style="width:90px">
               </div>
-              <div class="f" style="max-width:260px"><label>行为问题数量</label>
-                <div class="seg" id="segBehavior">
-                  <button data-v="0" class="on">自动</button>
-                  <button data-v="1">1 题</button>
-                  <button data-v="2">2 题</button>
-                  <button data-v="3">3 题</button>
-                  <button data-v="4">4 题</button>
-                </div>
+              <div class="f" style="max-width:260px"><label>行为问题数量（0 = 自动）</label>
+                <input type="number" id="numBehavior" min="0" max="20" value="0" style="width:90px">
               </div>
             </div>
             <div class="f"><label>选择轮次（多选）</label></div>
@@ -957,6 +947,7 @@ function writeLS(key, val){ try{ localStorage.setItem(key, JSON.stringify(val));
 function load(){
   state = Object.assign({}, DEFAULT_STATE, readLS(LS_KEY, {}));
   state.profile = Object.assign({}, DEFAULT_STATE.profile, state.profile || {});
+  state.ivPrefs = Object.assign({}, DEFAULT_STATE.ivPrefs, state.ivPrefs || {});
   state.education  = Array.isArray(state.education)   ? state.education   : [];
   state.experiences= Array.isArray(state.experiences) ? state.experiences : [];
   state.skills     = Array.isArray(state.skills)      ? state.skills      : [];
@@ -1626,22 +1617,23 @@ function buildQuestions(){
       f:["你个人具体做了什么（不是你们团队）？","这个结果里有多少是你的功劳？","如果重来一次，你会改哪个决定？"],
       personal:e.org});
   });
-  /* 再补通用行为题（题量按偏好） */
+  /* 再补通用行为题（题量按偏好，超出题库则循环） */
   const shuffled = [...GENERIC_BEHAVIOR].sort(()=>Math.random()-0.5);
   const autoNeed = exps.length===0 ? 4 : (exps.length===1 ? 3 : 2);
   const need = (state.ivPrefs && state.ivPrefs.behaviorCount>0) ? state.ivPrefs.behaviorCount : autoNeed;
-  shuffled.slice(0,need).forEach(g=>{
+  for(let i=0;i<need;i++){
+    const g = shuffled[i % shuffled.length];
     const q = exps.length ? g.q + "（优先用你简历里的真实经历）" : g.q;
     qs.push({cat:"behavior", q, f:g.f});
-  });
-  /* 其他轮次按等级选题（每轮题量按偏好） */
+  }
+  /* 其他轮次按等级选题（每轮题量按偏好，超出题库则循环） */
   const perRound = (state.ivPrefs && state.ivPrefs.perRound) || 2;
   const rounds = [...document.querySelectorAll("#roundOpts .opt.on")].map(el=>el.dataset.cat);
   rounds.forEach(cat=>{
     if(cat==="behavior") return;
-    const pool = QUESTION_BANK.filter(q=>q.cat===cat && q.lv<=lv+0);
-    const pick = pool.sort(()=>Math.random()-0.5).slice(0,perRound);
-    pick.forEach(q=>qs.push({cat:q.cat, q:q.q, f:q.f}));
+    const pool = QUESTION_BANK.filter(q=>q.cat===cat && q.lv<=lv+0).sort(()=>Math.random()-0.5);
+    if(!pool.length) return;
+    for(let i=0;i<perRound;i++){ const q = pool[i % pool.length]; qs.push({cat:q.cat, q:q.q, f:q.f}); }
   });
   return qs;
 }
@@ -1712,23 +1704,7 @@ function renderQuestion(){
       <button class="btn sm voice-insert" id="btnVoiceInsert" style="display:none">插入到笔记</button>
     </div>
     <button class="followup-btn" id="btnFU">面试官追问（${c.f.length}）</button>
-    <div class="followup-list" id="fuList">${c.f.map((f,i)=>`<div class="fu-item"><b>追问 ${i+1}</b>${esc(f)}</div>`).join("")}</div>
-    <div class="score-row">
-      ${[["s","结构"],["c","内容"],["d","表达"]].map(([k,t])=>`
-        <div class="score-box">
-          <div class="sb-t"><span>${t}</span><b id="sv_${k}">${c.score[k]}</b>/5</div>
-          <input type="range" min="1" max="5" step="1" value="${c.score[k]}" data-sk="${k}">
-        </div>`).join("")}
-    </div>
-    <div class="f" style="margin-top:14px">
-      <label>红黑榜自检（点选你踩中的雷）</label>
-      <div class="rf-chips">${RED_FLAGS.map((r,i)=>`<button class="rf-chip ${c.rf.has(i)?"hit":""}" data-rf="${i}">${esc(r)}</button>`).join("")}</div>
-    </div>
-    <div class="verdict-row">
-      <span class="vr-t">这个回答达到「${["校招/实习","1-3 年","3-5 年"][state.level-1]}」的门槛吗？</span>
-      ${[["strong yes","强达标"],["yes","达标"],["borderline","边缘"],["no","不达标"]].map(([v,t])=>`
-        <button class="vr-btn ${c.verdict===v?"on":""}" data-v="${v}">${t}</button>`).join("")}
-    </div>`;
+    <div class="followup-list" id="fuList">${c.f.map((f,i)=>`<div class="fu-item"><b>追问 ${i+1}</b>${esc(f)}</div>`).join("")}</div>`;
   /* 绑定 */
   $("#tToggle").onclick = toggleTimer;
   $("#tReset").onclick = ()=>{ c.t=0; c.running=false; clearInterval(timerH); $("#tDisp").textContent="00:00"; $("#tDisp").className="timer"; $("#tToggle").textContent="开始计时"; };
@@ -1743,15 +1719,6 @@ function renderQuestion(){
     $("#qNotes").value = c.note;
     toast("已插入到笔记");
   };
-  $("#qCard").querySelectorAll("input[type=range]").forEach(r=>{
-    r.oninput = ()=>{ c.score[r.dataset.sk]=+r.value; $("#sv_"+r.dataset.sk).textContent=r.value; };
-  });
-  $("#qCard").querySelectorAll(".rf-chip").forEach(b=>{
-    b.onclick = ()=>{ const i=+b.dataset.rf; c.rf.has(i)?c.rf.delete(i):c.rf.add(i); b.classList.toggle("hit"); };
-  });
-  $("#qCard").querySelectorAll(".vr-btn").forEach(b=>{
-    b.onclick = ()=>{ c.verdict=b.dataset.v; $("#qCard").querySelectorAll(".vr-btn").forEach(x=>x.classList.remove("on")); b.classList.add("on"); };
-  });
   $("#qCard").querySelectorAll(".frame-step input").forEach(cb=>{
     cb.onchange = ()=>{ const i=+cb.dataset.fi; cb.checked?c.frameDone.add(i):c.frameDone.delete(i); cb.closest(".frame-step").classList.toggle("done",cb.checked); };
   });
@@ -1809,9 +1776,53 @@ $("#btnNextQ").onclick = ()=>{
   else { showSummary(); }
 };
 function showSummary(){
+  stopVoice();
   $("#ivRunner").style.display="none";
   const sv = $("#ivSummary"); sv.style.display="block";
   const qs = iv.qs;
+  /* 阶段一：逐题自评（打完分再生成复盘） */
+  sv.innerHTML = `
+    <h2>面试结束 · 逐题自评</h2>
+    <div style="font-size:13px;color:var(--ink2);margin-bottom:14px">回忆刚才的回答，为每题打分、标记踩中的雷区，再生成复盘报告。</div>
+    ${qs.map((q,qi)=>`
+    <div class="panel" style="padding:16px 18px;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:4px">第 ${qi+1} 题 · ${CATS[q.cat].name} · 用时 ${fmtT(q.t||0)}</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px">${esc(q.q)}</div>
+      ${q.note?`<div style="font-size:12px;color:var(--ink2);background:var(--panel2);border-radius:8px;padding:8px 10px;margin-bottom:10px;white-space:pre-wrap">${esc(q.note)}</div>`:""}
+      <div class="score-row">
+        ${[["s","结构"],["c","内容"],["d","表达"]].map(([k,t])=>`
+          <div class="score-box">
+            <div class="sb-t"><span>${t}</span><b id="sv_${qi}_${k}">${q.score[k]}</b>/5</div>
+            <input type="range" min="1" max="5" step="1" value="${q.score[k]}" data-qi="${qi}" data-sk="${k}">
+          </div>`).join("")}
+      </div>
+      <div style="font-size:12px;color:var(--ink2);margin:10px 0 6px">踩中的雷区（点选）</div>
+      <div class="rf-chips">${RED_FLAGS.map((r,i)=>`<button class="rf-chip ${q.rf.has(i)?"hit":""}" data-qi="${qi}" data-rf="${i}">${esc(r)}</button>`).join("")}</div>
+      <div class="verdict-row" style="margin-top:10px">
+        <span class="vr-t">达到「${["校招/实习","1-3 年","3-5 年"][state.level-1]}」门槛？</span>
+        ${[["strong yes","强达标"],["yes","达标"],["borderline","边缘"],["no","不达标"]].map(([v,t])=>`
+          <button class="vr-btn ${q.verdict===v?"on":""}" data-qi="${qi}" data-v="${v}">${t}</button>`).join("")}
+      </div>
+    </div>`).join("")}
+    <div style="display:flex;gap:10px;margin:6px 0 20px;flex-wrap:wrap">
+      <button class="btn primary" id="btnGenReport">完成自评，生成复盘报告</button>
+      <button class="btn" id="btnSkipEval">跳过自评直接看报告</button>
+    </div>
+    <div id="ivReport"></div>`;
+  /* 绑定自评控件 */
+  sv.querySelectorAll("input[type=range]").forEach(r=>{
+    r.oninput = ()=>{ const q=qs[+r.dataset.qi]; q.score[r.dataset.sk]=+r.value; sv.querySelector("#sv_"+r.dataset.qi+"_"+r.dataset.sk).textContent=r.value; };
+  });
+  sv.querySelectorAll(".rf-chip").forEach(b=>{
+    b.onclick = ()=>{ const q=qs[+b.dataset.qi], i=+b.dataset.rf; q.rf.has(i)?q.rf.delete(i):q.rf.add(i); b.classList.toggle("hit"); };
+  });
+  sv.querySelectorAll(".vr-btn").forEach(b=>{
+    b.onclick = ()=>{ const q=qs[+b.dataset.qi]; q.verdict=b.dataset.v; sv.querySelectorAll(`.vr-btn[data-qi="${b.dataset.qi}"]`).forEach(x=>x.classList.remove("on")); b.classList.add("on"); };
+  });
+  $("#btnGenReport").onclick = ()=>renderReport(qs);
+  $("#btnSkipEval").onclick = ()=>renderReport(qs);
+}
+function renderReport(qs){
   const avg = k => (qs.reduce((a,q)=>a+q.score[k],0)/qs.length).toFixed(1);
   const s=avg("s"), c=avg("c"), d=avg("d");
   const rfCnt = {}; qs.forEach(q=>q.rf.forEach(i=>rfCnt[i]=(rfCnt[i]||0)+1));
@@ -1827,12 +1838,16 @@ function showSummary(){
   if(weakest) advice.push(`最弱轮次：${CATS[weakest[0]].name}（均分 ${(weakest[1].reduce((x,y)=>x+y)/weakest[1].length).toFixed(1)}）——本周再练 3 题。`);
   const passCnt = qs.filter(q=>q.verdict==="strong yes"||q.verdict==="yes").length;
   const barColor = v => v>=4?"var(--green)":v>=3?"var(--gold)":"var(--red)";
-  sessions.unshift({id:uid(), date:new Date().toISOString(), s:+s, c:+c, d:+d, n:qs.length, pass:passCnt,
-    rounds:[...new Set(qs.map(q=>CATS[q.cat].name))]});
-  if(sessions.length>20) sessions.length = 20;
-  writeLS(LS_SESS, sessions);
-  sv.innerHTML = `
-    <h2>本场复盘</h2>
+  const VMAP = {"strong yes":"强达标","yes":"达标","borderline":"边缘","no":"不达标"};
+  if(!iv.recorded){
+    iv.recorded = true;
+    sessions.unshift({id:uid(), date:new Date().toISOString(), s:+s, c:+c, d:+d, n:qs.length, pass:passCnt,
+      rounds:[...new Set(qs.map(q=>CATS[q.cat].name))]});
+    if(sessions.length>20) sessions.length = 20;
+    writeLS(LS_SESS, sessions);
+  }
+  $("#ivReport").innerHTML = `
+    <h2 style="margin-top:10px">本场复盘</h2>
     <div class="dim-bars">
       ${[["结构",s],["内容",c],["表达",d]].map(([t,v])=>`
         <div class="dim-bar">
@@ -1847,13 +1862,14 @@ function showSummary(){
         <td>${i+1}</td><td>${CATS[q.cat].name}</td>
         <td style="max-width:340px">${esc(q.q.slice(0,46))}${q.q.length>46?"…":""}</td>
         <td>${q.score.s}</td><td>${q.score.c}</td><td>${q.score.d}</td>
-        <td>${q.verdict||"—"}</td><td>${fmtT(q.t||0)}</td></tr>`).join("")}
+        <td>${VMAP[q.verdict]||"—"}</td><td>${fmtT(q.t||0)}</td></tr>`).join("")}
     </table>
     <div class="advice-list">${advice.map(a=>`<div class="advice">${esc(a)}</div>`).join("") || '<div class="advice">本场没有明显短板——去练更难的题，或者找人给你当面试官。</div>'}</div>
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
       <button class="btn primary" id="btnCopySummary">复制复盘文本</button>
       <button class="btn" id="btnAgainIV">再来一场</button>
     </div>`;
+  $("#ivReport").scrollIntoView({behavior:"smooth", block:"start"});
   $("#btnCopySummary").onclick = ()=>{
     const txt = ["【模拟面试复盘】",
       `结构 ${s}/5 · 内容 ${c}/5 · 表达 ${d}/5 · 自评达标 ${passCnt}/${qs.length}`,
@@ -1868,9 +1884,9 @@ function showSummary(){
     });
   };
   $("#btnAgainIV").onclick = ()=>{
-    sv.style.display="none";
+    $("#ivSummary").style.display="none";
     $("#ivSetup").style.display="block";
-    renderIVStats();
+    renderIVStats(); updateIvPreview();
   };
 }
 
@@ -2028,24 +2044,20 @@ function updateIvPreview(){
     : "请先勾选至少一个轮次";
 }
 function syncIvPrefUI(){
-  $("#segPerRound").querySelectorAll("button").forEach(b=>b.classList.toggle("on", +b.dataset.v===state.ivPrefs.perRound));
-  $("#segBehavior").querySelectorAll("button").forEach(b=>b.classList.toggle("on", +b.dataset.v===state.ivPrefs.behaviorCount));
+  $("#numPerRound").value = state.ivPrefs.perRound;
+  $("#numBehavior").value = state.ivPrefs.behaviorCount;
   updateIvPreview();
 }
-$("#segPerRound").querySelectorAll("button").forEach(b=>{
-  b.onclick = ()=>{
-    state.ivPrefs.perRound = +b.dataset.v; save();
-    $("#segPerRound").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); updateIvPreview();
-  };
-});
-$("#segBehavior").querySelectorAll("button").forEach(b=>{
-  b.onclick = ()=>{
-    state.ivPrefs.behaviorCount = +b.dataset.v; save();
-    $("#segBehavior").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); updateIvPreview();
-  };
-});
+$("#numPerRound").onchange = e=>{
+  const v = Math.max(1, Math.min(20, parseInt(e.target.value)||1));
+  e.target.value = v;
+  state.ivPrefs.perRound = v; save(); updateIvPreview();
+};
+$("#numBehavior").onchange = e=>{
+  const v = Math.max(0, Math.min(20, parseInt(e.target.value)||0));
+  e.target.value = v;
+  state.ivPrefs.behaviorCount = v; save(); updateIvPreview();
+};
 
 /* ========== 证件照 ========== */
 function renderPhotoField(){
@@ -2445,6 +2457,8 @@ $("#btnDemo").onclick = ()=>{
     jd:"岗位职责：\n1. 负责用户增长方向的产品规划与迭代，对次日留存与转化率负责；\n2. 基于数据分析与用户调研发现增长机会，独立完成需求分析并输出 PRD；\n3. 设计并推动 A/B 测试落地，搭建漏斗监控与指标体系；\n4. 与运营、设计、研发跨部门协作，推动项目按期上线；\n5. 定期开展竞品分析与行业研究，支撑产品策略。\n\n任职要求：\n1. 本科及以上学历，熟悉 SQL 与常用数据分析工具（Excel / Python 加分）；\n2. 有用户增长、活动策划或数据驱动产品迭代经验者优先；\n3. 熟练使用 Figma / Axure 进行原型设计；\n4. 具备优秀的跨部门沟通与项目推进能力，有从 0 到 1 项目经历者优先；\n5. 对数据敏感，逻辑清晰，有 strong ownership（自驱力强）。",
     customDict: state.customDict||[],
     level: state.level||1,
+    expLimit: state.expLimit||0,
+    ivPrefs: state.ivPrefs||{perRound:2,behaviorCount:0},
     style:"modern",
     portfolio:[
       {id:uid(),title:"「二手书漂流」校园小程序",role:"产品负责人",time:"2024.09 – 2025.01",link:"",
