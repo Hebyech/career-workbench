@@ -324,6 +324,18 @@ fieldset+fieldset{border-top:1px dashed var(--line)}
 .ats-dot.ok{background:var(--green-soft);color:var(--green)}
 .ats-dot.bad{background:var(--red-soft);color:var(--red)}
 
+/* ========== 经历相关度 ========== */
+.exp-tools{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.exp-tools select{padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;font-family:inherit;background:#fff;color:var(--ink)}
+.rel-badge{font-size:10.5px;padding:2px 8px;border-radius:99px;font-weight:700;margin-left:6px}
+.rel-badge.hi{background:var(--green-soft);color:var(--green)}
+.rel-badge.mid{background:var(--gold-soft);color:var(--gold)}
+.rel-badge.lo{background:var(--red-soft);color:var(--red)}
+.rel-badge.na{background:var(--panel2);color:var(--ink3)}
+.rel-kw{margin-top:8px;font-size:11px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.rel-kw span{background:var(--primary-soft);color:var(--primary);padding:1px 7px;border-radius:99px}
+.mini-card.exp-off{opacity:.55}
+
 /* ========== 简历照片 ========== */
 #resumePage .rz-head-left{display:flex;gap:16px;align-items:center;min-width:0}
 #resumePage .rz-photo{
@@ -585,6 +597,11 @@ footer a{color:var(--ink2)}
 
         <fieldset>
           <div class="fs-title"><h3>实习 / 项目经历</h3><span class="hint">每行一条 bullet</span></div>
+          <div class="exp-tools">
+            <button class="btn sm" id="btnSortExp">⇅ 按 JD 相关度排序</button>
+            <span style="font-size:12px;color:var(--ink2)">简历展示</span>
+            <select id="selExpLimit"></select>
+          </div>
           <div id="expList"></div>
           <button class="add-btn" id="btnAddExp">＋ 添加实习或项目</button>
         </fieldset>
@@ -876,7 +893,7 @@ const LS_SESS = "careerToolkit_sessions_v1";
 const DEFAULT_STATE = {
   profile:{name:"",intent:"",phone:"",email:"",city:"",link:"",photo:"",showPhoto:false},
   education:[], experiences:[], skills:[], honors:"", jd:"",
-  customDict:[], level:1, style:"classic", portfolio:[]
+  customDict:[], level:1, style:"classic", portfolio:[], expLimit:0
 };
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 let hist = [], tpls = [], sessions = [];
@@ -1005,11 +1022,40 @@ function resumeFullText(){
   const parts = [];
   parts.push(state.profile.intent||"");
   state.education.forEach(e=>parts.push([e.school,e.degree,e.major,e.detail].join(" ")));
-  state.experiences.forEach(e=>parts.push([e.org,e.role].join(" ")+" "+(e.bullets||"")));
+  selectedExps().forEach(e=>parts.push([e.org,e.role].join(" ")+" "+(e.bullets||"")));
   state.skills.forEach(s=>parts.push(s.cat+" "+s.items));
   state.portfolio.forEach(x=>parts.push([x.title,x.role,x.desc].filter(Boolean).join(" ")));
   parts.push(state.honors||"");
   return parts.join("\n");
+}
+
+/* ---------- 经历 JD 相关度 ---------- */
+function jdKeywords(){
+  const jd = state.jd||"";
+  const enJd = extractEn(jd);
+  const {found:cnJd} = extractCn(jd);
+  const kw = {};
+  for(const [k,v] of Object.entries(enJd)) kw[k]=Math.min(v,3);
+  for(const [k,v] of Object.entries(cnJd)) if(!kw[k]||kw[k]<Math.min(v,3)) kw[k]=Math.min(v,3);
+  return kw;
+}
+function expRelevance(e, jdKw){
+  const keys = Object.keys(jdKw);
+  if(!keys.length) return null;
+  const text = [e.org,e.role,e.bullets].filter(Boolean).join(" ");
+  const en = extractEn(text), {found:cn} = extractCn(text);
+  const inExp = new Set([...Object.keys(en), ...Object.keys(cn)]);
+  let total=0, hit=0; const matched=[];
+  for(const [k,w] of Object.entries(jdKw)){
+    total += w;
+    if(inExp.has(k)){ hit += w; matched.push(k); }
+  }
+  return {score: total?Math.round(hit/total*100):0, matched};
+}
+function selectedExps(){
+  const list = state.experiences.filter(e=>e.org||e.role);
+  const n = state.expLimit||0;
+  return n>0 ? list.slice(0,n) : list;
 }
 
 /* =====================================================
@@ -1038,23 +1084,44 @@ function renderEdu(){
 }
 function renderExp(){
   const box = $("#expList"); box.innerHTML = "";
+  const jdKw = jdKeywords();
+  const hasJD = Object.keys(jdKw).length>0;
   state.experiences.forEach((e,i)=>{
-    const d = document.createElement("div"); d.className="mini-card";
+    const rel = expRelevance(e, jdKw);
+    const badge = !hasJD ? `<span class="rel-badge na">填 JD 后算相关度</span>`
+      : rel.score>=60 ? `<span class="rel-badge hi">高度相关 ${rel.score}%</span>`
+      : rel.score>=30 ? `<span class="rel-badge mid">部分相关 ${rel.score}%</span>`
+      : `<span class="rel-badge lo">低相关 ${rel.score}%</span>`;
+    const limited = state.expLimit>0 && i>=state.expLimit;
+    const d = document.createElement("div"); d.className="mini-card"+(limited?" exp-off":"");
     d.innerHTML = `
-      <div class="mc-head"><span>经历 ${i+1}</span><button class="del-btn" data-i="${i}">删除</button></div>
+      <div class="mc-head"><span>经历 ${i+1} ${badge}${limited?'<span class="rel-badge na">未收入简历</span>':""}</span><button class="del-btn" data-i="${i}">删除</button></div>
       <div class="row2">
         <div class="f"><label>公司 / 项目名</label><input data-k="org" value="${esc(e.org)}"></div>
         <div class="f"><label>你的角色</label><input data-k="role" value="${esc(e.role)}" placeholder="产品实习生"></div>
       </div>
       <div class="f"><label>时间</label><input data-k="time" value="${esc(e.time)}" placeholder="2025.03 – 2025.08"></div>
       <div class="f"><label>工作内容（一行一条，建议 3-5 条）</label>
-        <textarea data-k="bullets" rows="5" placeholder="主导 xx 功能迭代，通过 3 轮 A/B 测试将次日留存从 41% 提升至 47%&#10;独立完成 12 篇竞品分析，输出 5 项建议，2 项进入路线图"></textarea></div>`;
+        <textarea data-k="bullets" rows="5" placeholder="主导 xx 功能迭代，通过 3 轮 A/B 测试将次日留存从 41% 提升至 47%&#10;独立完成 12 篇竞品分析，输出 5 项建议，2 项进入路线图"></textarea></div>
+      ${hasJD && rel && rel.matched.length?`<div class="rel-kw">命中 JD 词：${rel.matched.slice(0,8).map(k=>`<span>${esc(k)}</span>`).join("")}${rel.matched.length>8?" +"+ (rel.matched.length-8)+" 个":""}</div>`:""}`;
     d.querySelector(".del-btn").onclick = ()=>{ state.experiences.splice(i,1); renderExp(); renderAll(); };
     d.querySelectorAll("input,textarea").forEach(inp=>{
       inp.oninput = ()=>{ e[inp.dataset.k]=inp.value; save(); renderAnalysisDeb(); renderPreviewDeb(); };
     });
     box.appendChild(d);
   });
+  renderExpTools();
+}
+function renderExpTools(){
+  const sel = $("#selExpLimit"); if(!sel) return;
+  const n = state.experiences.length;
+  const cur = state.expLimit||0;
+  let html = `<option value="0">全部 ${n} 段</option>`;
+  for(let i=1;i<=n;i++) html += `<option value="${i}">前 ${i} 段</option>`;
+  sel.innerHTML = html;
+  const target = Math.min(cur, n);
+  sel.value = String(target);
+  if(target!==cur){ state.expLimit = target; save(); }
 }
 function renderSkills(){
   const box = $("#skillList"); box.innerHTML = "";
@@ -1173,7 +1240,7 @@ function renderPreview(){
       </div>
       ${e.detail?`<div class="rz-edu-note">${esc(e.detail)}</div>`:""}
     </div>`).join("");
-  const expHtml = state.experiences.filter(e=>e.org||e.role).map(e=>{
+  const expHtml = selectedExps().map(e=>{
     const lines = (e.bullets||"").split("\n").map(s=>s.trim()).filter(Boolean);
     return `<div class="rz-item">
       <div class="rz-line1">
@@ -1648,6 +1715,20 @@ function compressImage(file, maxSide, quality, cb){
 }
 $("#btnAddEdu").onclick = ()=>{ state.education.push({school:"",degree:"",time:"",detail:""}); renderEdu(); save(); };
 $("#btnAddExp").onclick = ()=>{ state.experiences.push({id:uid(),org:"",role:"",time:"",bullets:""}); renderExp(); save(); };
+$("#btnSortExp").onclick = ()=>{
+  const jdKw = jdKeywords();
+  if(!Object.keys(jdKw).length){ toast("先在下方粘贴目标岗位 JD"); return; }
+  if(state.experiences.length<2){ toast("只有一段经历，无需排序"); return; }
+  const scored = state.experiences.map(e=>({e, r:expRelevance(e, jdKw)}));
+  scored.sort((a,b)=> (b.r?b.r.score:-1) - (a.r?a.r.score:-1));
+  state.experiences = scored.map(x=>x.e);
+  save(); renderExp(); renderAll();
+  toast("已按 JD 相关度排序，最相关的排在最前");
+};
+$("#selExpLimit").onchange = e=>{
+  state.expLimit = +e.target.value; save(); renderExp(); renderAll();
+  toast(state.expLimit>0 ? `简历将只展示前 ${state.expLimit} 段经历` : "简历展示全部经历");
+};
 $("#btnAddSkill").onclick = ()=>{ state.skills.push({cat:"",items:""}); renderSkills(); save(); };
 $("#segLevel").querySelectorAll("button").forEach(b=>{
   b.onclick = ()=>{
@@ -2029,10 +2110,11 @@ $("#btnExportPortfolio").onclick = printPortfolio;
   };
 });
 $("#iHonors").oninput = e=>{ state.honors=e.target.value; save(); renderPreviewDeb(); };
-$("#iJD").oninput = e=>{ state.jd=e.target.value; save(); renderAnalysisDeb(); };
+$("#iJD").oninput = e=>{ state.jd=e.target.value; save(); renderAnalysisDeb(); renderExpDeb(); };
 
 /* Debounce 渲染 */
 const renderAnalysisDeb = debounce(renderAnalysis, 350);
+const renderExpDeb = debounce(renderExp, 450);
 renderPreviewDeb = debounce(()=>{ renderPreview(); renderQC(); renderAnalysisDeb(); }, 250);
 function renderAll(){ renderAnalysis(); renderQC(); renderPreview(); }
 
