@@ -811,9 +811,28 @@ footer a{color:var(--ink2)}
                 <button data-l="3">3-5 年</button>
               </div>
             </div>
+            <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:2px">
+              <div class="f" style="max-width:200px"><label>每轮题量</label>
+                <div class="seg" id="segPerRound">
+                  <button data-v="1">1 题</button>
+                  <button data-v="2" class="on">2 题</button>
+                  <button data-v="3">3 题</button>
+                </div>
+              </div>
+              <div class="f" style="max-width:260px"><label>行为问题数量</label>
+                <div class="seg" id="segBehavior">
+                  <button data-v="0" class="on">自动</button>
+                  <button data-v="1">1 题</button>
+                  <button data-v="2">2 题</button>
+                  <button data-v="3">3 题</button>
+                  <button data-v="4">4 题</button>
+                </div>
+              </div>
+            </div>
             <div class="f"><label>选择轮次（多选）</label></div>
             <div class="opt-grid" id="roundOpts"></div>
             <div class="iv-stat-row" id="ivStats"></div>
+            <div style="font-size:12.5px;color:var(--ink2);margin:0 0 14px" id="ivPreview"></div>
             <button class="btn primary" id="btnStartIV" style="font-size:14.5px;padding:11px 28px">开始面试</button>
           </div>
 
@@ -909,7 +928,8 @@ const LS_SESS = "careerToolkit_sessions_v1";
 const DEFAULT_STATE = {
   profile:{name:"",intent:"",phone:"",email:"",city:"",link:"",photo:"",showPhoto:false},
   education:[], experiences:[], skills:[], honors:"", jd:"",
-  customDict:[], level:1, style:"classic", portfolio:[], expLimit:0
+  customDict:[], level:1, style:"classic", portfolio:[], expLimit:0,
+  ivPrefs:{ perRound:2, behaviorCount:0 }
 };
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 let hist = [], tpls = [], sessions = [];
@@ -1509,19 +1529,21 @@ function buildQuestions(){
       f:["你个人具体做了什么（不是你们团队）？","这个结果里有多少是你的功劳？","如果重来一次，你会改哪个决定？"],
       personal:e.org});
   });
-  /* 再补通用行为题到 3-4 道 */
+  /* 再补通用行为题（题量按偏好） */
   const shuffled = [...GENERIC_BEHAVIOR].sort(()=>Math.random()-0.5);
-  const need = exps.length===0 ? 4 : (exps.length===1 ? 3 : 2);
+  const autoNeed = exps.length===0 ? 4 : (exps.length===1 ? 3 : 2);
+  const need = (state.ivPrefs && state.ivPrefs.behaviorCount>0) ? state.ivPrefs.behaviorCount : autoNeed;
   shuffled.slice(0,need).forEach(g=>{
     const q = exps.length ? g.q + "（优先用你简历里的真实经历）" : g.q;
     qs.push({cat:"behavior", q, f:g.f});
   });
-  /* 其他轮次按等级选题 */
+  /* 其他轮次按等级选题（每轮题量按偏好） */
+  const perRound = (state.ivPrefs && state.ivPrefs.perRound) || 2;
   const rounds = [...document.querySelectorAll("#roundOpts .opt.on")].map(el=>el.dataset.cat);
   rounds.forEach(cat=>{
     if(cat==="behavior") return;
     const pool = QUESTION_BANK.filter(q=>q.cat===cat && q.lv<=lv+0);
-    const pick = pool.sort(()=>Math.random()-0.5).slice(0,2);
+    const pick = pool.sort(()=>Math.random()-0.5).slice(0,perRound);
     pick.forEach(q=>qs.push({cat:q.cat, q:q.q, f:q.f}));
   });
   return qs;
@@ -1535,7 +1557,7 @@ function renderRoundOpts(){
       <div class="opt-d">${c.frame.split("（")[0]} · 建议每题 ${Math.round(c.dur/60)} 分钟</div>
     </button>`).join("");
   box.querySelectorAll(".opt").forEach(el=>{
-    el.onclick = ()=> el.classList.toggle("on");
+    el.onclick = ()=>{ el.classList.toggle("on"); updateIvPreview(); };
   });
   renderIVStats();
 }
@@ -1870,6 +1892,39 @@ $("#segLevel").querySelectorAll("button").forEach(b=>{
   };
 });
 $("#btnStartIV").onclick = startIV;
+
+/* 面试偏好：每轮题量 + 行为题数量 */
+function updateIvPreview(){
+  const exps = state.experiences.filter(e=>e.org);
+  const autoNeed = exps.length===0 ? 4 : (exps.length===1 ? 3 : 2);
+  const beh = (state.ivPrefs.behaviorCount>0) ? state.ivPrefs.behaviorCount : autoNeed;
+  const behTotal = Math.min(exps.length,3) + beh;
+  const rounds = [...document.querySelectorAll("#roundOpts .opt.on")].filter(el=>el.dataset.cat!=="behavior").length;
+  const otherTotal = rounds * state.ivPrefs.perRound;
+  const total = behTotal + otherTotal;
+  $("#ivPreview").textContent = total>0
+    ? `预计出题 ${total} 道 = 行为面 ${behTotal} 道（含 ${Math.min(exps.length,3)} 道个性化）+ 其他轮次 ${otherTotal} 道`
+    : "请先勾选至少一个轮次";
+}
+function syncIvPrefUI(){
+  $("#segPerRound").querySelectorAll("button").forEach(b=>b.classList.toggle("on", +b.dataset.v===state.ivPrefs.perRound));
+  $("#segBehavior").querySelectorAll("button").forEach(b=>b.classList.toggle("on", +b.dataset.v===state.ivPrefs.behaviorCount));
+  updateIvPreview();
+}
+$("#segPerRound").querySelectorAll("button").forEach(b=>{
+  b.onclick = ()=>{
+    state.ivPrefs.perRound = +b.dataset.v; save();
+    $("#segPerRound").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); updateIvPreview();
+  };
+});
+$("#segBehavior").querySelectorAll("button").forEach(b=>{
+  b.onclick = ()=>{
+    state.ivPrefs.behaviorCount = +b.dataset.v; save();
+    $("#segBehavior").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); updateIvPreview();
+  };
+});
 
 /* ========== 证件照 ========== */
 function renderPhotoField(){
@@ -2309,6 +2364,7 @@ renderEdu(); renderExp(); renderSkills();
 renderPhotoField(); renderPfCoverBox();
 applyStyle();
 renderRoundOpts(); roundOptsInited = true;
+syncIvPrefUI();
 renderAll();
 refreshAll();
 go("dashboard");
