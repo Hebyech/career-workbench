@@ -868,10 +868,23 @@ footer a{color:var(--ink2)}
         <div class="view-head">
           <div>
             <h2>设置</h2>
-            <div class="sub">数据都保存在本机浏览器的 localStorage，可导出 JSON 备份或导入恢复。</div>
+            <div class="sub">数据默认保存在本机浏览器；绑定 GitHub 后可云端同步，换设备也能接着用。</div>
           </div>
         </div>
         <div class="panel" style="padding:6px 20px 12px">
+          <div class="set-row"><div><b>云端同步（GitHub Gist）</b><span id="gistStatus">未绑定 —— 填入 Token 后可上传/恢复全部数据，跨设备使用</span></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="gistToken" placeholder="GitHub Token（gist 权限）" style="width:230px;font-size:12.5px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-family:inherit">
+              <button class="btn sm" id="btnGistSave">保存 Token</button>
+            </div>
+          </div>
+          <div class="set-row" id="gistActions" style="display:none"><div><b>同步操作</b><span id="gistLast">尚未同步过</span></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn sm primary" id="btnGistUp">上传到云端</button>
+              <button class="btn sm" id="btnGistDown">从云端恢复</button>
+              <button class="btn sm ghost-danger" id="btnGistUnbind">解绑</button>
+            </div>
+          </div>
           <div class="set-row"><div><b>本地存储占用</b><span id="storeInfo">--</span></div></div>
           <div class="set-row"><div><b>导出全部数据</b><span>下载一个 JSON 备份文件</span></div><button class="btn sm" id="btnExportData">导出备份</button></div>
           <div class="set-row"><div><b>导入备份</b><span>选择之前的 JSON 覆盖恢复</span></div><label class="btn sm" for="importData" style="cursor:pointer">选择文件</label><input type="file" id="importData" accept=".json,application/json" hidden></div>
@@ -2346,6 +2359,7 @@ function renderSettings(){
   const kb = bytes/1024;
   const txt = kb<1024 ? kb.toFixed(0)+" KB" : (kb/1024).toFixed(2)+" MB";
   $("#storeInfo").textContent = `${txt}（上限约 5 MB）${kb>4000?" · 已接近上限，建议清理图片":""}`;
+  renderGistUI();
 }
 function downloadFile(text, filename, mime){
   const blob = new Blob([text], {type:mime});
@@ -2369,6 +2383,7 @@ $("#importData").onchange = e=>{
       if(!d || !d.state) throw 0;
       state = Object.assign({}, DEFAULT_STATE, d.state);
       state.profile = Object.assign({}, DEFAULT_STATE.profile, state.profile||{});
+      state.ivPrefs = Object.assign({}, DEFAULT_STATE.ivPrefs, state.ivPrefs||{});
       state.education = state.education||[]; state.experiences = state.experiences||[];
       state.skills = state.skills||[]; state.portfolio = state.portfolio||[];
       hist = Array.isArray(d.hist)?d.hist:[]; tpls = Array.isArray(d.tpls)?d.tpls:[]; sessions = Array.isArray(d.sessions)?d.sessions:[];
@@ -2379,6 +2394,96 @@ $("#importData").onchange = e=>{
     }catch(err){ toast("导入失败：文件格式不正确"); }
   };
   r.readAsText(f); e.target.value = "";
+};
+
+/* ========== 云端同步（GitHub Gist） ========== */
+const LS_GTOKEN = "careerToolkit_gist_token", LS_GID = "careerToolkit_gist_id", LS_GLAST = "careerToolkit_gist_last";
+const GIST_FILE = "career-workbench-backup.json";
+function gistToken(){ return localStorage.getItem(LS_GTOKEN) || ""; }
+async function gistApi(path, method, body){
+  const res = await fetch("https://api.github.com" + path, {
+    method: method || "GET",
+    headers: {"Authorization":"Bearer "+gistToken(), "Accept":"application/vnd.github+json", "Content-Type":"application/json"},
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if(!res.ok){
+    throw new Error("GitHub API 返回 " + res.status + (res.status===401?"（Token 无效或未勾选 gist 权限）":res.status===404?"（未找到云端备份）":""));
+  }
+  return res.json();
+}
+async function findBackupGist(){
+  const list = await gistApi("/gists?per_page=100", "GET");
+  const g = list.find(x=>x.files && x.files[GIST_FILE]);
+  return g ? g.id : null;
+}
+function applyPayload(d){
+  if(!d || !d.state) throw new Error("bad payload");
+  state = Object.assign({}, DEFAULT_STATE, d.state);
+  state.profile = Object.assign({}, DEFAULT_STATE.profile, state.profile||{});
+  state.ivPrefs = Object.assign({}, DEFAULT_STATE.ivPrefs, state.ivPrefs||{});
+  state.education = state.education||[]; state.experiences = state.experiences||[];
+  state.skills = state.skills||[]; state.portfolio = state.portfolio||[];
+  hist = Array.isArray(d.hist)?d.hist:[]; tpls = Array.isArray(d.tpls)?d.tpls:[]; sessions = Array.isArray(d.sessions)?d.sessions:[];
+  save(); writeLS(LS_HIST,hist); writeLS(LS_TPL,tpls); writeLS(LS_SESS,sessions);
+  syncInputsFromState(); renderEdu(); renderExp(); renderSkills();
+  renderPhotoField(); renderPfCoverBox(); applyStyle(); renderAll(); refreshAll(); renderSettings();
+}
+async function cloudUpload(){
+  const status = $("#gistStatus");
+  status.textContent = "上传中…";
+  try{
+    const body = {description:"求职工作台数据备份", public:false,
+      files:{[GIST_FILE]:{content:JSON.stringify({version:1, exportedAt:new Date().toISOString(), state, hist, tpls, sessions})}}};
+    let gid = localStorage.getItem(LS_GID);
+    if(!gid) gid = await findBackupGist();
+    if(gid){ await gistApi("/gists/"+gid, "PATCH", body); localStorage.setItem(LS_GID, gid); }
+    else{ const g = await gistApi("/gists", "POST", body); localStorage.setItem(LS_GID, g.id); }
+    localStorage.setItem(LS_GLAST, new Date().toISOString());
+    status.textContent = "已绑定 · 同步正常";
+    $("#gistLast").textContent = "上次上传 " + fmtDate(new Date().toISOString());
+    toast("已上传到云端");
+  }catch(e){ status.textContent = "上传失败：" + e.message; }
+}
+async function cloudDownload(){
+  const status = $("#gistStatus");
+  status.textContent = "恢复中…";
+  try{
+    let gid = localStorage.getItem(LS_GID);
+    if(!gid){ gid = await findBackupGist(); if(gid) localStorage.setItem(LS_GID, gid); }
+    if(!gid){ status.textContent = "云端还没有备份，先在任意设备点「上传到云端」"; return; }
+    const g = await gistApi("/gists/"+gid, "GET");
+    const f = g.files && g.files[GIST_FILE];
+    if(!f || !f.content) throw new Error("备份文件为空");
+    applyPayload(JSON.parse(f.content));
+    status.textContent = "已绑定 · 同步正常";
+    $("#gistLast").textContent = "上次恢复 " + fmtDate(new Date().toISOString());
+    toast("已从云端恢复全部数据");
+  }catch(e){ status.textContent = "恢复失败：" + e.message; }
+}
+function renderGistUI(){
+  const has = !!gistToken();
+  $("#gistActions").style.display = has ? "" : "none";
+  if(has){
+    $("#gistStatus").textContent = "已绑定 Token · 可上传/恢复（Token 仅存本机浏览器）";
+    const last = localStorage.getItem(LS_GLAST);
+    $("#gistLast").textContent = last ? ("上次上传 " + fmtDate(last)) : "尚未同步过";
+  }
+}
+$("#btnGistSave").onclick = ()=>{
+  const v = $("#gistToken").value.trim();
+  if(!v){ toast("请先粘贴 Token"); return; }
+  localStorage.setItem(LS_GTOKEN, v);
+  $("#gistToken").value = "";
+  renderGistUI();
+  toast("Token 已保存到本机");
+};
+$("#btnGistUp").onclick = cloudUpload;
+$("#btnGistDown").onclick = ()=>{ if(confirm("从云端恢复会覆盖本机全部数据，确定继续？")) cloudDownload(); };
+$("#btnGistUnbind").onclick = ()=>{
+  if(!confirm("解除绑定？云端备份与本机数据都会保留，仅清除本机保存的 Token。")) return;
+  localStorage.removeItem(LS_GTOKEN); localStorage.removeItem(LS_GID); localStorage.removeItem(LS_GLAST);
+  renderGistUI();
+  toast("已解绑");
 };
 
 /* ========== 打印导出 ========== */
