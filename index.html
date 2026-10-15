@@ -352,6 +352,19 @@ fieldset+fieldset{border-top:1px dashed var(--line)}
 .pm-jd-hint{font-size:12px;color:var(--gold);background:var(--gold-soft);padding:8px 12px;border-radius:8px;margin-top:10px}
 .pm-actions{display:flex;gap:10px;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
 
+/* ========== 语音输入 ========== */
+.voice-row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.voice-btn{font-size:12px;padding:5px 14px;border-radius:99px;border:1px solid var(--line);background:#fff;cursor:pointer;font-family:inherit;font-weight:600;color:var(--primary);white-space:nowrap}
+.voice-btn:hover{border-color:var(--primary);background:var(--primary-soft)}
+.voice-btn.recording{border-color:var(--red);color:var(--red);animation:vPulse 1.5s infinite}
+@keyframes vPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.voice-status{font-size:11px;color:var(--ink3)}
+.voice-transcript{margin-top:8px;padding:10px 12px;background:var(--panel2);border-radius:8px;font-size:12.5px;line-height:1.7;display:none}
+.voice-transcript.show{display:block}
+.voice-transcript .pause-mark{color:var(--red);font-weight:700;background:var(--red-soft);padding:0 3px;border-radius:3px}
+.voice-transcript .repeat-mark{color:var(--gold);font-weight:700;background:var(--gold-soft);padding:0 3px;border-radius:3px}
+.voice-insert{margin-top:6px}
+
 /* ========== 简历照片 ========== */
 #resumePage .rz-head-left{display:flex;gap:16px;align-items:center;min-width:0}
 #resumePage .rz-photo{
@@ -797,7 +810,6 @@ footer a{color:var(--ink2)}
         <div class="view-head">
           <div>
             <h2>模拟面试</h2>
-            <div class="sub">题单根据简历工坊里的 JD 与经历生成；方法论来自 Claude-Skills · pm-interview-prep（STAR / CIRCLES / AARM / 五步估算）。</div>
           </div>
         </div>
         <div class="iv-wrap">
@@ -839,6 +851,7 @@ footer a{color:var(--ink2)}
           <div class="runner" id="ivRunner" style="display:none">
             <div class="panel q-card" id="qCard"></div>
             <div class="nav-row">
+              <button class="btn" id="btnBackSetup" title="返回面试设置">← 返回</button>
               <button class="btn" id="btnPrevQ">上一题</button>
               <div class="progress-bar"><i id="ivProg" style="width:0%"></i></div>
               <button class="btn primary" id="btnNextQ">下一题</button>
@@ -1204,6 +1217,90 @@ function showPolishModal(i){
     save(); renderExp(); renderAll(); closeModal();
     toast("已还原到润色前的版本");
   };
+}
+
+/* ---------- 语音输入（卡壳检测） ---------- */
+let recog = null, recogActive = false, lastResultTime = 0, pauseCheckTimer = null, voicePauses = [];
+const PAUSE_THRESHOLD = 2500; // 超过 2.5 秒无语音视为卡壳
+
+function toggleVoice(question){
+  if(recogActive){ stopVoice(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ toast("当前浏览器不支持语音识别，请使用 Chrome 或 Edge"); return; }
+  recog = new SR();
+  recog.lang = "zh-CN";
+  recog.continuous = true;
+  recog.interimResults = true;
+  voicePauses = [];
+  lastResultTime = Date.now();
+  const transcript = $("#voiceTranscript");
+  const status = $("#voiceStatus");
+  const btn = $("#btnVoice");
+  const insertBtn = $("#btnVoiceInsert");
+  transcript.classList.add("show"); transcript.innerHTML = "";
+  insertBtn.style.display = "none";
+  btn.classList.add("recording"); btn.textContent = "⏹ 停止录音";
+  status.textContent = "正在聆听…（停顿超过 2.5 秒会标记为卡壳）";
+  recogActive = true;
+  let finalText = "";
+
+  recog.onresult = e=>{
+    lastResultTime = Date.now();
+    let interim = "";
+    for(let i=e.resultIndex; i<e.results.length; i++){
+      const r = e.results[i];
+      if(r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    renderTranscript(transcript, finalText, interim, voicePauses);
+  };
+  recog.onerror = e=>{
+    if(e.error === "not-allowed"){ status.textContent = "请允许麦克风权限"; }
+    else if(e.error !== "no-speech"){ status.textContent = "识别出错：" + e.error; }
+  };
+  recog.onend = ()=>{
+    if(recogActive){ recog.start(); return; } // 意外结束时自动重启
+    stopVoice();
+  };
+
+  // 卡壳检测：每 500ms 检查一次是否超时
+  pauseCheckTimer = setInterval(()=>{
+    if(!recogActive) return;
+    const gap = Date.now() - lastResultTime;
+    if(gap > PAUSE_THRESHOLD){
+      voicePauses.push({at: Date.now(), dur: gap});
+      lastResultTime = Date.now(); // 重置，避免重复标记
+      renderTranscript(transcript, finalText, "", voicePauses);
+      status.textContent = `检测到卡壳（共 ${voicePauses.length} 次），继续讲…`;
+    }
+  }, 500);
+
+  recog.start();
+}
+function stopVoice(){
+  if(recog){ try{ recogActive=false; recog.stop(); }catch(e){} recog = null; }
+  clearInterval(pauseCheckTimer);
+  const btn = $("#btnVoice"), status = $("#voiceStatus"), insertBtn = $("#btnVoiceInsert");
+  if(btn){ btn.classList.remove("recording"); btn.textContent = "🎤 语音输入"; }
+  if(status) status.textContent = "点击开始，边说边检测卡壳";
+  const transcript = $("#voiceTranscript");
+  if(transcript && transcript.innerText.trim()){ insertBtn.style.display = "inline-flex"; }
+}
+function renderTranscript(el, finalText, interim, pauses){
+  let html = esc(finalText);
+  // 标记卡壳位置（在文本中插入标记）
+  if(pauses.length > 0){
+    // 在最终文本末尾标注卡壳次数
+    html += `<span class="pause-mark">【卡壳 ×${pauses.length}】</span>`;
+  }
+  if(interim) html += `<span style="color:var(--ink3)">${esc(interim)}</span>`;
+  // 检测重复词（「那个那个」「然后然后」等）
+  const repeats = finalText.match(/(\S{1,3})\1{1,}/g);
+  if(repeats && repeats.length > 0){
+    const unique = [...new Set(repeats)].slice(0, 5);
+    html += `<div style="margin-top:6px;font-size:11px"><span class="repeat-mark">重复词</span> ${unique.map(r=>esc(r)).join("、")} ——这些位置可能思路不清</div>`;
+  }
+  el.innerHTML = html;
 }
 
 /* =====================================================
@@ -1590,7 +1687,7 @@ function renderQuestion(){
       </div>
       <div class="q-idx">第 ${iv.idx+1} / ${iv.qs.length} 题</div>
     </div>
-    <div class="q-text">${esc(c.q)}${c.personal?`<div class="q-personal">个性化自你的经历：${esc(c.personal)}</div>`:""}</div>
+    <div class="q-text">${esc(c.q)}</div>
     <div class="timer-row">
       <span class="timer" id="tDisp">${fmtT(c.t||0)}</span>
       <button class="t-btn main" id="tToggle">${c.running?"暂停":"开始计时"}</button>
@@ -1606,9 +1703,15 @@ function renderQuestion(){
     </details>
     <div class="f" style="margin-top:14px">
       <label>你的答案要点 / 口头演练后的笔记（选填，自动保存）</label>
-      <textarea class="notes-ta" id="qNotes" placeholder="演练时建议只写关键词：出声作答，别照稿念。练完再把卡壳的点记下来。">${esc(c.note)}</textarea>
+      <textarea class="notes-ta" id="qNotes" placeholder="出声作答，这里只记关键词或卡壳点。">${esc(c.note)}</textarea>
+      <div class="voice-row">
+        <button class="voice-btn" id="btnVoice">🎤 语音输入</button>
+        <span class="voice-status" id="voiceStatus">点击开始，边说边检测卡壳</span>
+      </div>
+      <div class="voice-transcript" id="voiceTranscript"></div>
+      <button class="btn sm voice-insert" id="btnVoiceInsert" style="display:none">插入到笔记</button>
     </div>
-    <button class="followup-btn" id="btnFU">面试官追问（${c.f.length}）——回答完主问题再点开</button>
+    <button class="followup-btn" id="btnFU">面试官追问（${c.f.length}）</button>
     <div class="followup-list" id="fuList">${c.f.map((f,i)=>`<div class="fu-item"><b>追问 ${i+1}</b>${esc(f)}</div>`).join("")}</div>
     <div class="score-row">
       ${[["s","结构"],["c","内容"],["d","表达"]].map(([k,t])=>`
@@ -1631,6 +1734,15 @@ function renderQuestion(){
   $("#tReset").onclick = ()=>{ c.t=0; c.running=false; clearInterval(timerH); $("#tDisp").textContent="00:00"; $("#tDisp").className="timer"; $("#tToggle").textContent="开始计时"; };
   $("#btnFU").onclick = ()=>{ $("#fuList").classList.toggle("show"); };
   $("#qNotes").oninput = e=>{ c.note = e.target.value; };
+  /* 语音输入 */
+  $("#btnVoice").onclick = ()=>{ toggleVoice(c); };
+  $("#btnVoiceInsert").onclick = ()=>{
+    const t = $("#voiceTranscript").innerText.trim();
+    if(!t) return;
+    c.note = (c.note ? c.note + "\n" : "") + "[语音] " + t;
+    $("#qNotes").value = c.note;
+    toast("已插入到笔记");
+  };
   $("#qCard").querySelectorAll("input[type=range]").forEach(r=>{
     r.oninput = ()=>{ c.score[r.dataset.sk]=+r.value; $("#sv_"+r.dataset.sk).textContent=r.value; };
   });
@@ -1680,6 +1792,15 @@ function toggleTimer(){
   if(c.running){ c.running=false; clearInterval(timerH); $("#tToggle").textContent="继续"; }
   else { c.running=true; startTick(); $("#tToggle").textContent="暂停"; }
 }
+$("#btnBackSetup").onclick = ()=>{
+  if(!iv) return;
+  if(!confirm("返回设置将丢弃当前进度（已答内容会保留在本场总结中）。确定返回？")) return;
+  stopVoice();
+  clearInterval(timerH);
+  $("#ivRunner").style.display="none";
+  $("#ivSetup").style.display="block";
+  renderIVStats(); updateIvPreview();
+};
 $("#btnPrevQ").onclick = ()=>{ if(iv&&iv.idx>0){ clearInterval(timerH); iv.idx--; renderQuestion(); } };
 $("#btnNextQ").onclick = ()=>{
   if(!iv) return;
