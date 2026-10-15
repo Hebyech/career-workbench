@@ -335,6 +335,22 @@ fieldset+fieldset{border-top:1px dashed var(--line)}
 .rel-kw{margin-top:8px;font-size:11px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .rel-kw span{background:var(--primary-soft);color:var(--primary);padding:1px 7px;border-radius:99px}
 .mini-card.exp-off{opacity:.55}
+.polish-btn{font-size:11px;padding:3px 10px;border:1px solid var(--line);border-radius:99px;background:#fff;color:var(--primary);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap}
+.polish-btn:hover{border-color:var(--primary);background:var(--primary-soft)}
+.polished-badge{font-size:10px;padding:2px 6px;border-radius:99px;background:var(--green-soft);color:var(--green);font-weight:700;margin-left:4px}
+
+/* 润色弹窗 */
+.pm-score-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;padding:12px 14px;background:var(--panel2);border-radius:10px}
+.pm-score-num{font-size:28px;font-weight:800;color:var(--primary)}
+.pm-score-label{font-size:12px;color:var(--ink2)}
+.pm-sec-t{font-size:13px;font-weight:700;margin:14px 0 8px;color:var(--ink)}
+.pm-item{padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px}
+.pm-orig{font-size:12.5px;color:var(--ink2);margin-bottom:6px;padding:6px 8px;background:#faf8f5;border-radius:6px;border-left:3px solid var(--red)}
+.pm-new{font-size:12.5px;color:var(--ink);padding:6px 8px;background:var(--green-soft);border-radius:6px;border-left:3px solid var(--green)}
+.pm-fixes{margin-top:6px;font-size:11px;color:var(--ink3)}
+.pm-fixes li{margin-bottom:2px}
+.pm-jd-hint{font-size:12px;color:var(--gold);background:var(--gold-soft);padding:8px 12px;border-radius:8px;margin-top:10px}
+.pm-actions{display:flex;gap:10px;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
 
 /* ========== 简历照片 ========== */
 #resumePage .rz-head-left{display:flex;gap:16px;align-items:center;min-width:0}
@@ -1058,6 +1074,118 @@ function selectedExps(){
   return n>0 ? list.slice(0,n) : list;
 }
 
+/* ---------- 经历润色（HR/面试官视角） ---------- */
+function polishBullet(text, jdKeys){
+  let p = text.trim().replace(/^[。；;，,.\s]+/,"").replace(/[。；;，,.\s]+$/,"");
+  const fixes = [];
+  // 删除弱词
+  for(const w of WEAK_CN){
+    if(p.startsWith(w)){ p=p.slice(w.length).trim(); fixes.push(`删除弱词「${w}」`); break; }
+  }
+  for(const w of WEAK_EN){
+    if(p.toLowerCase().startsWith(w)){ p=p.slice(w.length).trim(); fixes.push(`删除弱词「${w}」`); break; }
+  }
+  // 补充动作动词
+  if(!ACTION_VERBS.some(v=>p.startsWith(v))){
+    p = "推动" + p;
+    fixes.push("补充动作动词「推动」（可根据实际改为 主导/搭建/设计 等）");
+  }
+  // 补充主题前缀
+  if(!p.startsWith("【")){
+    p = "【核心贡献】" + p;
+    fixes.push("补充主题前缀「核心贡献」（请改为具体方向名，如【增长策略】）");
+  }
+  // 补充量化占位
+  if(!/\d/.test(p)){
+    p += "，___";
+    fixes.push("缺少量化数据，已加 ___ 占位（请补充真实数字，绝不编造）");
+  }
+  // JD 关键词建议
+  if(jdKeys && jdKeys.length>0){
+    const bLower = p.toLowerCase();
+    const miss = jdKeys.filter(k=>!bLower.includes(k.toLowerCase())).slice(0,3);
+    if(miss.length>0) fixes.push(`JD 未覆盖词：${miss.join("、")}（如属实请自然融入）`);
+  }
+  return {text:p, fixes};
+}
+function analyzeForPolish(e){
+  const bullets = (e.bullets||"").split("\n").map(s=>s.trim()).filter(Boolean);
+  const jdKw = jdKeywords();
+  const jdKeys = Object.keys(jdKw);
+  const hasJD = jdKeys.length>0;
+  const scores = bullets.map(b=>checkBullet(b).score);
+  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+  const items = bullets.map(b=>{
+    const qc = checkBullet(b);
+    const hrView = [];
+    if(qc.weakHit) hrView.push(`HR 看到「${qc.weakHit}」会默认你是执行者而非决策者`);
+    if(!/\d/.test(b)) hrView.push("没有数字，HR 无法判断你的贡献量级");
+    if(!ACTION_VERBS.some(v=>b.startsWith(v))) hrView.push("开头缺动作动词，3 秒浏览制下会被跳过");
+    if(b.length>70) hrView.push("超过 70 字，HR 没耐心看完，建议拆分");
+    if(b.length<12) hrView.push("太短，HR 看不出你做了什么");
+    if(hasJD){
+      const bLower = b.toLowerCase();
+      const hit = jdKeys.filter(k=>bLower.includes(k.toLowerCase()));
+      if(hit.length>0) hrView.push(`✓ 命中 JD 词：${hit.join("、")}`);
+    }
+    return {original:b, qc, hrView, polished: polishBullet(b, jdKeys)};
+  });
+  // 经历级 JD 对齐
+  const expText = [e.org,e.role,e.bullets].filter(Boolean).join(" ");
+  const enExp = extractEn(expText), {found:cnExp} = extractCn(expText);
+  const expKeys = new Set([...Object.keys(enExp), ...Object.keys(cnExp)]);
+  const jdMiss = hasJD ? jdKeys.filter(k=>!expKeys.has(k)) : [];
+  return {avgScore, items, jdMiss, hasJD, bulletCount: bullets.length};
+}
+function showPolishModal(i){
+  const e = state.experiences[i];
+  if(!e){ toast("经历不存在"); return; }
+  const r = analyzeForPolish(e);
+  if(r.bulletCount===0){ toast("这段经历还没有内容，先写一些再润色"); return; }
+  const scoreColor = r.avgScore>=70 ? "var(--green)" : r.avgScore>=40 ? "var(--gold)" : "var(--red)";
+  let html = `
+    <div class="pm-score-row">
+      <div class="pm-score-num" style="color:${scoreColor}">${r.avgScore}</div>
+      <div><div style="font-weight:700;font-size:14px">HR 第一印象评分</div>
+      <div class="pm-score-label">${r.avgScore>=70?"整体不错，微调即可":r.avgScore>=40?"有明显短板，建议按下方建议修改":"需要大幅优化，建议重写"}</div></div>
+    </div>
+    <div class="pm-sec-t">面试官会怎么想</div>`;
+  r.items.forEach((it,bi)=>{
+    html += `<div class="pm-item">
+      <div class="pm-orig"><strong>原文 ${bi+1}：</strong>${esc(it.original)}</div>
+      ${it.hrView.length?`<ul class="pm-fixes" style="margin:4px 0 6px;padding-left:16px">${it.hrView.map(v=>`<li>${esc(v)}</li>`).join("")}</ul>`:""}
+      <div class="pm-new"><strong>润色后：</strong>${esc(it.polished.text)}</div>
+      ${it.polished.fixes.length?`<ul class="pm-fixes" style="margin:4px 0 0;padding-left:16px">${it.polished.fixes.map(f=>`<li>${esc(f)}</li>`).join("")}</ul>`:""}
+    </div>`;
+  });
+  if(r.hasJD && r.jdMiss.length>0){
+    html += `<div class="pm-sec-t">JD 对齐建议</div>
+    <div class="pm-jd-hint">以下 JD 关键词在这段经历中未出现，如果属实请自然融入：<strong>${r.jdMiss.slice(0,8).join("、")}</strong></div>`;
+  }
+  if(!r.hasJD){
+    html += `<div class="pm-jd-hint">尚未填写 JD，建议先在下方粘贴目标岗位 JD，润色会更精准</div>`;
+  }
+  html += `<div class="pm-actions">
+    <button class="btn primary" id="pmApply">确认应用（自动备份原稿）</button>
+    ${e.backup?'<button class="btn" id="pmRestore">还原到润色前</button>':""}
+    <button class="btn light" id="pmCancel">取消</button>
+  </div>`;
+  openModal(`润色建议 — 经历 ${i+1}（${esc(e.org||"未命名")}）`, html);
+  $("#pmCancel").onclick = ()=>closeModal();
+  $("#pmApply").onclick = ()=>{
+    e.backup = e.bullets; // 备份原稿
+    e.bullets = r.items.map(it=>it.polished.text).join("\n");
+    save(); renderExp(); renderAll(); closeModal();
+    toast("已应用润色建议，原稿已备份，可随时还原");
+  };
+  const btnRestore = $("#pmRestore");
+  if(btnRestore) btnRestore.onclick = ()=>{
+    e.bullets = e.backup; delete e.backup;
+    save(); renderExp(); renderAll(); closeModal();
+    toast("已还原到润色前的版本");
+  };
+}
+
 /* =====================================================
    渲染：表单
 ===================================================== */
@@ -1095,7 +1223,11 @@ function renderExp(){
     const limited = state.expLimit>0 && i>=state.expLimit;
     const d = document.createElement("div"); d.className="mini-card"+(limited?" exp-off":"");
     d.innerHTML = `
-      <div class="mc-head"><span>经历 ${i+1} ${badge}${limited?'<span class="rel-badge na">未收入简历</span>':""}</span><button class="del-btn" data-i="${i}">删除</button></div>
+      <div class="mc-head"><span>经历 ${i+1} ${badge}${limited?'<span class="rel-badge na">未收入简历</span>':""}${e.backup?'<span class="polished-badge">已润色</span>':""}</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <button class="polish-btn" data-i="${i}" title="站在 HR/面试官角度，根据 JD 给出优化建议">润色</button>
+          <button class="del-btn" data-i="${i}">删除</button>
+        </span></div>
       <div class="row2">
         <div class="f"><label>公司 / 项目名</label><input data-k="org" value="${esc(e.org)}"></div>
         <div class="f"><label>你的角色</label><input data-k="role" value="${esc(e.role)}" placeholder="产品实习生"></div>
@@ -1105,6 +1237,7 @@ function renderExp(){
         <textarea data-k="bullets" rows="5" placeholder="主导 xx 功能迭代，通过 3 轮 A/B 测试将次日留存从 41% 提升至 47%&#10;独立完成 12 篇竞品分析，输出 5 项建议，2 项进入路线图"></textarea></div>
       ${hasJD && rel && rel.matched.length?`<div class="rel-kw">命中 JD 词：${rel.matched.slice(0,8).map(k=>`<span>${esc(k)}</span>`).join("")}${rel.matched.length>8?" +"+ (rel.matched.length-8)+" 个":""}</div>`:""}`;
     d.querySelector(".del-btn").onclick = ()=>{ state.experiences.splice(i,1); renderExp(); renderAll(); };
+    d.querySelector(".polish-btn").onclick = ()=>{ showPolishModal(i); };
     d.querySelectorAll("input,textarea").forEach(inp=>{
       inp.oninput = ()=>{ e[inp.dataset.k]=inp.value; save(); renderAnalysisDeb(); renderPreviewDeb(); };
     });
